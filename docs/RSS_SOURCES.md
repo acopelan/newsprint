@@ -203,5 +203,5 @@ Found a great RSS feed? Submit a PR or open an issue with:
 
 ---
 
-**Last Updated:** January 2026
-**Maintained by:** The Newsprint Project
+**Last Updated:** January 15, 2026
+**Maintained by:** Arieh Copelan

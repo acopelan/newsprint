@@ -1,7 +1,7 @@
 /*******************************
  * NEWSPRINT - Daily News Digest
  * Version: 2.0
- * Author: The Newsprint Project
+ * Author: Arieh Copelan
  * Description: Automated news aggregation with topic monitoring, 
  *              market data, and weather delivered to email/Kindle
  *******************************/
@@ -10,13 +10,14 @@
  * CONFIGURATION
  *******************************/
 
-// API Keys
-const OPENAI_API_KEY = PropertiesService.getScriptProperties().getProperty('OPENAI_API_KEY');
+// Secrets and Emails - Set these in Project Settings > Script Properties
+const SCRIPT_PROPERTIES = PropertiesService.getScriptProperties();
+const OPENAI_API_KEY = SCRIPT_PROPERTIES.getProperty('OPENAI_API_KEY');
+const RECIPIENT_EMAIL = SCRIPT_PROPERTIES.getProperty('RECIPIENT_EMAIL');
+const KINDLE_EMAIL = SCRIPT_PROPERTIES.getProperty('KINDLE_EMAIL');
 
-// Email Settings
-const RECIPIENT_EMAIL = "your@email.com";
-const KINDLE_EMAIL = "your-kindle@kindle.com"; // Optional - for Kindle delivery
-const USE_KINDLE = false; // Set to true to send to Kindle instead
+// General Settings
+const USE_KINDLE = true; // Set to true to send to Kindle instead
 
 // Geographic Locations for Weather
 const LOCATIONS = {
@@ -25,18 +26,14 @@ const LOCATIONS = {
   "London": { lat: 51.5074, lon: -0.1278 }
 };
 
-// RSS News Sources
+// Add your RSS news sources here
 const NEWS_SOURCES = [
   { name: "Associated Press", url: "https://apnews.com/apf-topnews" },
-  { name: "Reuters", url: "https://feeds.reuters.com/reuters/topNews" },
-  { name: "New York Times", url: "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml" },
-  { name: "Wall Street Journal", url: "https://feeds.a.dj.com/rss/RSSWorldNews.xml" },
-  { name: "TechCrunch", url: "https://techcrunch.com/feed/" },
-  { name: "Hacker News", url: "https://news.ycombinator.com/rss" }
+  { name: "Reuters", url: "https://www.reuters.com/rssfeed/technologyNews" },
+  { name: "Hacker News", url: "https://news.ycombinator.com/rss" },
 ];
 
-// Topic Monitoring (Google Alerts replacement)
-// Use quotes for exact phrase matching: "company name"
+// Google Alert topics
 const ALERT_TOPICS = [
   "\"Artificial Intelligence\"",
   "\"Tech Startups\"",
@@ -49,499 +46,449 @@ const ALERT_TOPICS = [
   "\"Your Name\""
 ];
 
-// Market Data
-const STOCKS = ["AAPL", "GOOGL", "MSFT", "TSLA"];
-const CRYPTO = ["BTC", "ETH", "SOL"];
-const FOREX = ["USD/EUR", "GBP/USD"];
+// Crypto and Stocks to track
+const CRYPTO_SYMBOLS = ["BTC", "ETH", "SOL"];
+const STOCK_SYMBOLS = ["AAPL", "GOOGL", "MSFT", "TSLA"];
 
 /*******************************
- * MAIN FUNCTION - Daily Report
- *******************************/
+ MAIN DAILY JOB - KINDLE VERSION WITH ATTACHMENT
+*******************************/
 function dailyReport() {
-  Logger.log("Starting daily report generation...");
+  const newsWithLinks = fetchNewsTextWithLinks();
+  const newsSummary = summarizeNewsWithChatGPT(newsWithLinks.text, newsWithLinks.links);
   
-  try {
-    // Gather all data
-    const news = fetchNewsText();
-    const summary = summarizeWithChatGPT(news);
-    const weatherReport = fetchWeatherForLocations();
-    const alerts = fetchAlerts();
-    const marketData = fetchMarketData();
-    
-    // Build email body
-    let emailBody = buildEmailBody(summary, weatherReport, alerts, marketData);
-    
-    // Send email
-    const recipient = USE_KINDLE ? KINDLE_EMAIL : RECIPIENT_EMAIL;
-    const subject = USE_KINDLE ? "Daily Digest" : "📰 Daily News + Weather Report";
-    
+  const alertsWithLinks = fetchAlertsWithLinks();
+  let alertsSummary = "";
+  if (alertsWithLinks.text && alertsWithLinks.text.length > 0) {
+    alertsSummary = summarizeAlertsWithChatGPT(alertsWithLinks.text, alertsWithLinks.links);
+  }
+  
+  const weatherReport = fetchWeatherForLocations();
+  const markets = fetchMarketData();
+  const marketSummary = summarizeMarkets(markets);
+
+  // Determine morning or evening edition
+  const now = new Date();
+  const hour = now.getHours();
+  const period = hour < 12 ? "Morning" : "Evening";
+  const dateStr = Utilities.formatDate(now, "Asia/Jerusalem", "EEEE, MMMM d, yyyy");
+
+  // Build HTML content
+  let htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Newsprint - ${period} Edition</title>
+  <style>
+    body {
+      font-family: Georgia, serif;
+      font-size: 14pt;
+      line-height: 1.6;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    h1 {
+      font-size: 20pt;
+      margin-bottom: 5px;
+      border-bottom: 2px solid #000;
+      padding-bottom: 10px;
+    }
+    h2 {
+      font-size: 16pt;
+      margin-top: 30px;
+      margin-bottom: 10px;
+      border-bottom: 1px solid #666;
+      padding-bottom: 5px;
+    }
+    .subtitle {
+      font-size: 12pt;
+      color: #666;
+      margin-bottom: 20px;
+    }
+    p {
+      margin-bottom: 15px;
+      text-align: justify;
+    }
+    a {
+      color: #0066cc;
+      text-decoration: underline;
+    }
+    .market-data {
+      font-family: 'Courier New', monospace;
+      font-size: 11pt;
+      line-height: 1.4;
+      white-space: pre-wrap;
+    }
+    .section {
+      margin-bottom: 30px;
+      page-break-inside: avoid;
+    }
+    .story-link {
+      font-size: 11pt;
+      color: #666;
+      margin-top: 5px;
+      margin-bottom: 15px;
+    }
+  </style>
+</head>
+<body>
+  <h1>NEWSPRINT</h1>
+  <div class="subtitle">${period} Edition - ${dateStr}</div>
+  
+  <div class="section">
+    <h2>POLITICS & TECHNOLOGY</h2>
+    ${newsSummary}
+  </div>
+`;
+
+  if (alertsSummary && alertsSummary.length > 0) {
+    htmlContent += `
+  <div class="section">
+    <h2>PERSONAL ALERTS</h2>
+    ${alertsSummary}
+  </div>
+`;
+  }
+
+  htmlContent += `
+  <div class="section">
+    <h2>MARKETS</h2>
+    <div class="market-data">${markets}</div>
+    ${marketSummary}
+  </div>
+  
+  <div class="section">
+    <h2>WEATHER</h2>
+    ${weatherReport.replace(/\n/g, '<br>')}
+  </div>
+  
+</body>
+</html>
+`;
+
+  // Plain text version for regular email
+  let textBody = `NEWSPRINT - ${period} Edition\n${dateStr}\n\n`;
+  textBody += "POLITICS & TECHNOLOGY\n-------------------------\n" + newsSummary.replace(/<[^>]*>/g, '') + "\n\n";
+  
+  if (alertsSummary && alertsSummary.length > 0) {
+    textBody += "PERSONAL ALERTS\n-------------------------\n" + alertsSummary.replace(/<[^>]*>/g, '') + "\n\n";
+  }
+  
+  textBody += "MARKETS\n-------------------------\n" + markets + "\n\n" + marketSummary.replace(/<[^>]*>/g, '') + "\n\n";
+  textBody += "WEATHER\n-------------------------\n" + weatherReport + "\n\n";
+
+  // Create HTML file as blob for Kindle attachment
+  const htmlBlob = Utilities.newBlob(htmlContent, 'text/html', `Newsprint_${period}_${Utilities.formatDate(now, "GMT", "yyyyMMdd")}.html`);
+
+  // Send to Kindle with HTML attachment
+  if (USE_KINDLE) {
     GmailApp.sendEmail(
-      recipient,
-      subject,
-      emailBody,
-      { 
-        name: "Newsprint Daily", 
-        replyTo: RECIPIENT_EMAIL 
+      KINDLE_EMAIL,
+      `Newsprint ${period}`,
+      "Your Newsprint digest is attached.",
+      {
+        name: "Newsprint",
+        attachments: [htmlBlob]
       }
     );
-    
-    Logger.log("✅ Daily report sent successfully!");
-    
-  } catch (error) {
-    Logger.log("❌ Error in daily report: " + error);
-    // Send error notification
-    GmailApp.sendEmail(
-      RECIPIENT_EMAIL,
-      "❌ Newsprint Error",
-      "Daily report failed with error:\n\n" + error
-    );
   }
+  
+  // Also send to your regular email with HTML body (no attachment needed)
+  GmailApp.sendEmail(
+    RECIPIENT_EMAIL,
+    `Newsprint - ${period} Edition`,
+    textBody,
+    {
+      name: "Newsprint",
+      htmlBody: htmlContent
+    }
+  );
 }
 
 /*******************************
- * EMAIL BODY BUILDER
- *******************************/
-function buildEmailBody(summary, weather, alerts, marketData) {
-  const date = Utilities.formatDate(new Date(), "PST", "EEEE, MMMM d, yyyy");
+ MARKETS DATA (CRYPTO + STOCKS)
+*******************************/
+function fetchMarketData() {
+  let report = "";
   
-  let body = `NEWSPRINT DAILY DIGEST\n`;
-  body += `${date}\n`;
-  body += `${"=".repeat(50)}\n\n`;
-  
-  // News Summary
-  body += `📰 NEWS SUMMARY\n`;
-  body += `${"-".repeat(50)}\n`;
-  body += `${summary}\n\n`;
-  
-  // Market Data
-  if (marketData) {
-    body += `📈 MARKET UPDATE\n`;
-    body += `${"-".repeat(50)}\n`;
-    body += `${marketData}\n\n`;
-  }
-  
-  // Weather
-  body += `🌤️  WEATHER FORECAST\n`;
-  body += `${"-".repeat(50)}\n`;
-  body += `${weather}\n\n`;
-  
-  // Topic Alerts
-  if (alerts) {
-    body += `🎯 TOPIC ALERTS (Last 12 Hours)\n`;
-    body += `${"-".repeat(50)}\n`;
-    body += `${alerts}\n\n`;
-  }
-  
-  body += `${"-".repeat(50)}\n`;
-  body += `Generated by Newsprint | Delivered with ☕\n`;
-  
-  return body;
-}
-
-/*******************************
- * RSS NEWS FETCHING
- *******************************/
-function fetchNewsText() {
-  let allNews = [];
-  
-  NEWS_SOURCES.forEach(source => {
+  // Fetch Crypto
+  report += "CRYPTOCURRENCY\n";
+  CRYPTO_SYMBOLS.forEach(symbol => {
     try {
-      Logger.log(`Fetching from ${source.name}...`);
-      const response = UrlFetchApp.fetch(source.url, { muteHttpExceptions: true });
-      
-      if (response.getResponseCode() !== 200) {
-        Logger.log(`Warning: ${source.name} returned ${response.getResponseCode()}`);
-        return;
-      }
-      
-      const xml = XmlService.parse(response.getContentText());
-      const items = xml.getRootElement().getChild("channel").getChildren("item");
-      
-      items.slice(0, 10).forEach(item => {
-        const title = item.getChild("title")?.getText() || "";
-        const description = item.getChild("description")?.getText() || "";
-        const link = item.getChild("link")?.getText() || "";
-        
-        allNews.push({
-          source: source.name,
-          title: title,
-          description: cleanHTML(description),
-          link: link
-        });
-      });
-      
-    } catch (err) {
-      Logger.log(`Error fetching ${source.name}: ${err}`);
+      const data = fetchCryptoData(symbol);
+      report += formatMarketData(symbol, data);
+      Utilities.sleep(2000);
+    } catch (e) {
+      Logger.log(`Error fetching ${symbol}: ${e}`);
+      report += `${symbol}: Data unavailable\n`;
     }
   });
   
-  // Format for summarization
-  return allNews.map(item => 
-    `[${item.source}] ${item.title}\n${item.description}`
-  ).join("\n\n");
-}
-
-function cleanHTML(text) {
-  if (!text) return "";
-  return text
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .trim();
-}
-
-/*******************************
- * AI SUMMARIZATION
- *******************************/
-function summarizeWithChatGPT(newsText) {
-  if (!OPENAI_API_KEY) {
-    Logger.log("No OpenAI API key - skipping summarization");
-    return newsText.substring(0, 2000) + "...\n\n[Configure OpenAI API key for AI summaries]";
-  }
+  report += "\nEQUITIES\n";
+  STOCK_SYMBOLS.forEach(symbol => {
+    try {
+      const data = fetchStockData(symbol);
+      report += formatMarketData(symbol, data);
+      Utilities.sleep(500);
+    } catch (e) {
+      Logger.log(`Error fetching ${symbol}: ${e}`);
+      report += `${symbol}: Data unavailable\n`;
+    }
+  });
   
-  const prompt = `You are a news editor creating a daily briefing. Summarize the following news articles into a concise, readable digest. Focus on the most important stories and provide context. Keep it under 500 words.
+  return report.trim();
+}
 
-News articles:
-${newsText}`;
+function summarizeMarkets(marketsData) {
+  const url = "https://api.openai.com/v1/chat/completions";
 
   const payload = {
-    model: "gpt-4",
+    model: "gpt-4o-mini",
     messages: [
-      { role: "system", content: "You are a skilled news editor creating daily briefings." },
-      { role: "user", content: prompt }
-    ],
-    max_tokens: 1000,
-    temperature: 0.7
-  };
-  
-  try {
-    const response = UrlFetchApp.fetch("https://api.openai.com/v1/chat/completions", {
-      method: "post",
-      headers: {
-        "Authorization": "Bearer " + OPENAI_API_KEY,
-        "Content-Type": "application/json"
+      {
+        role: "system", 
+        content: "You are a financial news writer for The Economist. Write a brief 2-3 sentence summary of what's happening in the markets based on the price changes. Mention the most significant movers and explain what might be driving the changes. CRITICAL FORMATTING: Wrap your response in <p></p> tags. Write in a narrative style without bullet points." 
       },
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    });
-    
-    const json = JSON.parse(response.getContentText());
-    
-    if (json.choices && json.choices[0]) {
-      return json.choices[0].message.content.trim();
-    } else {
-      Logger.log("Unexpected API response: " + response.getContentText());
-      return newsText.substring(0, 2000) + "...\n\n[Summarization unavailable]";
-    }
-    
-  } catch (err) {
-    Logger.log("ChatGPT error: " + err);
-    return newsText.substring(0, 2000) + "...\n\n[Summarization error]";
-  }
-}
-
-/*******************************
- * WEATHER FETCHING
- *******************************/
-function fetchWeatherForLocations() {
-  let report = [];
-  
-  for (const [city, coords] of Object.entries(LOCATIONS)) {
-    try {
-      const weather = fetchWeather(coords.lat, coords.lon);
-      report.push(`${city}:\n${weather}`);
-    } catch (err) {
-      Logger.log(`Weather error for ${city}: ${err}`);
-      report.push(`${city}: Weather unavailable`);
-    }
-  }
-  
-  return report.join("\n\n");
-}
-
-function fetchWeather(lat, lon) {
-  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto&forecast_days=3`;
-  
-  const response = UrlFetchApp.fetch(url);
-  const data = JSON.parse(response.getContentText());
-  
-  let forecast = [];
-  
-  for (let i = 0; i < 3; i++) {
-    const date = new Date(data.daily.time[i]);
-    const dayName = Utilities.formatDate(date, "PST", "EEE");
-    const tempMax = Math.round(data.daily.temperature_2m_max[i]);
-    const tempMin = Math.round(data.daily.temperature_2m_min[i]);
-    const precip = data.daily.precipitation_sum[i];
-    const weatherCode = data.daily.weathercode[i];
-    const condition = getWeatherCondition(weatherCode);
-    
-    forecast.push(`  ${dayName}: ${condition} ${tempMax}°/${tempMin}°C, Rain: ${precip}mm`);
-  }
-  
-  return forecast.join("\n");
-}
-
-function getWeatherCondition(code) {
-  const conditions = {
-    0: "☀️ Clear",
-    1: "🌤️ Mainly Clear",
-    2: "⛅ Partly Cloudy",
-    3: "☁️ Cloudy",
-    45: "🌫️ Foggy",
-    48: "🌫️ Foggy",
-    51: "🌦️ Light Drizzle",
-    61: "🌧️ Light Rain",
-    63: "🌧️ Rain",
-    65: "🌧️ Heavy Rain",
-    71: "🌨️ Light Snow",
-    73: "🌨️ Snow",
-    75: "🌨️ Heavy Snow",
-    95: "⛈️ Thunderstorm"
+      {
+        role: "user", 
+        content: "Based on these market movements, write a brief summary wrapped in <p></p> tags:\n\n" + marketsData 
+      }
+    ],
+    temperature: 0.3,
+    max_tokens: 300
   };
-  return conditions[code] || "🌡️ Weather";
-}
 
-/*******************************
- * TOPIC ALERTS (Google Alerts Replacement)
- *******************************/
-function fetchAlerts() {
-  const results = [];
-  const twelveHoursAgo = new Date();
-  twelveHoursAgo.setHours(twelveHoursAgo.getHours() - 12);
-  
-  Logger.log("Checking topic alerts...");
-  
-  ALERT_TOPICS.forEach((topic, index) => {
-    try {
-      Logger.log(`Searching for: ${topic}`);
-      const newsItems = searchGoogleNews(topic, twelveHoursAgo);
-      
-      if (newsItems.length > 0) {
-        results.push(`\n[${topic}]`);
-        newsItems.forEach(item => {
-          results.push(`  • ${item.title}`);
-          if (item.source) results.push(`    (${item.source}, ${item.date})`);
-        });
-      }
-      
-      // Rate limiting
-      if (index < ALERT_TOPICS.length - 1) {
-        Utilities.sleep(800);
-      }
-      
-    } catch (err) {
-      Logger.log(`Alert search failed for "${topic}": ${err}`);
-    }
-  });
-  
-  if (results.length === 0) {
-    return "No news alerts found for monitored topics in the past 12 hours.";
-  }
-  
-  return results.join("\n");
-}
-
-function searchGoogleNews(query, sinceDate) {
-  const encodedQuery = encodeURIComponent(query);
-  
-  const urls = [
-    `https://news.google.com/rss/search?q=${encodedQuery}&hl=en-US&gl=US&ceid=US:en`
-  ];
-  
-  let allResults = [];
-  
-  for (const url of urls) {
-    try {
-      const response = UrlFetchApp.fetch(url, {
-        muteHttpExceptions: true,
-        followRedirects: true,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      });
-      
-      if (response.getResponseCode() !== 200) continue;
-      
-      const xml = XmlService.parse(response.getContentText());
-      const channel = xml.getRootElement().getChild("channel");
-      if (!channel) continue;
-      
-      const items = channel.getChildren("item");
-      
-      for (let i = 0; i < Math.min(5, items.length); i++) {
-        const item = items[i];
-        const pubDateElement = item.getChild("pubDate");
-        if (!pubDateElement) continue;
-        
-        const pubDate = new Date(pubDateElement.getText());
-        
-        if (pubDate >= sinceDate) {
-          const titleElement = item.getChild("title");
-          const sourceElement = item.getChild("source");
-          
-          if (titleElement) {
-            allResults.push({
-              title: titleElement.getText(),
-              source: sourceElement ? sourceElement.getText().trim() : "Unknown",
-              date: Utilities.formatDate(pubDate, "PST", "MMM d, HH:mm")
-            });
-          }
-        }
-      }
-      
-    } catch (err) {
-      Logger.log(`Error searching ${url}: ${err}`);
-    }
-  }
-  
-  return allResults;
-}
-
-/*******************************
- * MARKET DATA
- *******************************/
-function fetchMarketData() {
-  let report = [];
-  
-  // Stocks
-  if (STOCKS.length > 0) {
-    report.push("STOCKS:");
-    STOCKS.forEach(symbol => {
-      try {
-        const data = fetchStockData(symbol);
-        if (data) report.push(formatMarketData(symbol, data));
-      } catch (err) {
-        Logger.log(`Error fetching ${symbol}: ${err}`);
-        report.push(`  ${symbol}: Error fetching data`);
-      }
-    });
-    report.push("");
-  }
-  
-  // Crypto
-  if (CRYPTO.length > 0) {
-    report.push("CRYPTO:");
-    CRYPTO.forEach(symbol => {
-      try {
-        const data = fetchCryptoData(symbol);
-        if (data) report.push(formatMarketData(symbol, data));
-      } catch (err) {
-        Logger.log(`Error fetching ${symbol}: ${err}`);
-        report.push(`  ${symbol}: Error fetching data`);
-      }
-    });
-    report.push("");
-  }
-  
-  // Forex
-  if (FOREX.length > 0) {
-    report.push("FOREX:");
-    FOREX.forEach(pair => {
-      try {
-        const data = fetchForexData(pair);
-        if (data) report.push(formatMarketData(pair, data));
-      } catch (err) {
-        Logger.log(`Error fetching ${pair}: ${err}`);
-        report.push(`  ${pair}: Error fetching data`);
-      }
-    });
-  }
-  
-  return report.length > 0 ? report.join("\n") : null;
-}
-
-const CACHE_DURATION = 1800; // 30 minutes
-
-function fetchWithCache(url, cacheKey) {
-  const cache = CacheService.getScriptCache();
-  const cached = cache.get(cacheKey);
-  if (cached) {
-    return JSON.parse(cached);
-  }
-  const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-  const data = response.getContentText();
-  cache.put(cacheKey, data, CACHE_DURATION);
-  return JSON.parse(data);
-}
-
-function fetchStockData(symbol) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1y`;
-  const data = fetchWithCache(url, `stock_${symbol}`);
-  
-  if (!data.chart || !data.chart.result || !data.chart.result[0]) return null;
-  
-  const result = data.chart.result[0];
-  const currentPrice = result.meta.regularMarketPrice;
-  const previousClose = result.meta.chartPreviousClose;
-  
-  return {
-    price: currentPrice,
-    change_24h: ((currentPrice - previousClose) / previousClose) * 100,
-    change_7d: calculateChange(result, 7),
-    change_30d: calculateChange(result, 30),
-    change_1y: calculateChange(result, 365)
+  const options = {
+    method: "post",
+    contentType: "application/json",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    payload: JSON.stringify(payload)
   };
+
+  try {
+    const res = UrlFetchApp.fetch(url, options);
+    const json = JSON.parse(res.getContentText());
+    return json.choices[0].message.content.trim();
+  } catch (e) {
+    Logger.log(e);
+    return "";
+  }
 }
 
 function fetchCryptoData(symbol) {
-  const cryptoIds = { BTC: "bitcoin", ETH: "ethereum", SOL: "solana" };
-  const id = cryptoIds[symbol] || symbol.toLowerCase();
-  
-  const url = `https://api.coincap.io/v2/assets/${id}`;
-  const data = fetchWithCache(url, `crypto_${symbol}`);
-  
-  return {
-    price: parseFloat(data.data.priceUsd),
-    change_24h: parseFloat(data.data.changePercent24Hr),
-    change_7d: null,
-    change_30d: null,
-    change_1y: null
-  };
+  try {
+    return fetchCryptoDataYahoo(symbol);
+  } catch (e1) {
+    Logger.log(`Yahoo failed for ${symbol}: ${e1}`);
+    try {
+      return fetchCryptoDataCoinCap(symbol);
+    } catch (e2) {
+      Logger.log(`CoinCap also failed for ${symbol}: ${e2}`);
+      throw new Error("All crypto APIs failed");
+    }
+  }
 }
 
-function fetchForexData(pair) {
-  const [from, to] = pair.split("/");
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${from}${to}=X?interval=1d&range=1y`;
-  const data = fetchWithCache(url, `forex_${pair}`);
+function fetchCryptoDataYahoo(symbol) {
+  const yahooSymbols = {
+    "BTC": "BTC-USD",
+    "ETH": "ETH-USD",
+    "SOL": "SOL-USD",
+    "XRP": "XRP-USD",
+    "ADA": "ADA-USD"
+  };
   
-  if (!data.chart || !data.chart.result || !data.chart.result[0]) return null;
+  const yahooSymbol = yahooSymbols[symbol];
+  if (!yahooSymbol) throw new Error("Unknown crypto symbol");
   
-  const result = data.chart.result[0];
-  const currentPrice = result.meta.regularMarketPrice;
-  const previousClose = result.meta.chartPreviousClose;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?range=1y&interval=1d`;
+  
+  const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  
+  if (response.getResponseCode() !== 200) {
+    throw new Error(`API returned ${response.getResponseCode()}`);
+  }
+  
+  const json = JSON.parse(response.getContentText());
+  
+  if (!json.chart || !json.chart.result || json.chart.result.length === 0) {
+    throw new Error("Invalid response structure");
+  }
+  
+  const result = json.chart.result[0];
+  const meta = result.meta;
+  const timestamps = result.timestamp;
+  const closes = result.indicators.quote[0].close;
+  
+  const currentPrice = meta.regularMarketPrice;
+  
+  const now = Math.floor(Date.now() / 1000);
+  const day1 = now - (24 * 60 * 60);
+  const day7 = now - (7 * 24 * 60 * 60);
+  const day30 = now - (30 * 24 * 60 * 60);
+  const day365 = now - (365 * 24 * 60 * 60);
+  
+  const price1d = findClosestPrice(timestamps, closes, day1);
+  const price7d = findClosestPrice(timestamps, closes, day7);
+  const price30d = findClosestPrice(timestamps, closes, day30);
+  const price1y = findClosestPrice(timestamps, closes, day365);
   
   return {
     price: currentPrice,
-    change_24h: ((currentPrice - previousClose) / previousClose) * 100,
-    change_7d: calculateChange(result, 7),
-    change_30d: calculateChange(result, 30),
-    change_1y: calculateChange(result, 365)
+    change_24h: calculateChange(price1d, currentPrice),
+    change_7d: calculateChange(price7d, currentPrice),
+    change_30d: calculateChange(price30d, currentPrice),
+    change_1y: calculateChange(price1y, currentPrice)
   };
 }
 
-function calculateChange(chartData, days) {
-  try {
-    const closes = chartData.indicators.quote[0].close;
-    if (!closes || closes.length < days) return null;
-    
-    const current = closes[closes.length - 1];
-    const past = closes[closes.length - days];
-    
-    if (!current || !past) return null;
-    
-    return ((current - past) / past) * 100;
-  } catch (err) {
-    return null;
+function fetchCryptoDataCoinCap(symbol) {
+  const coinIds = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "SOL": "solana",
+    "XRP": "xrp",
+    "ADA": "cardano"
+  };
+  
+  const coinId = coinIds[symbol];
+  if (!coinId) throw new Error("Unknown crypto symbol");
+  
+  const currentUrl = `https://api.coincap.io/v2/assets/${coinId}`;
+  const currentResponse = UrlFetchApp.fetch(currentUrl, { 
+    muteHttpExceptions: true,
+    headers: {
+      'Accept': 'application/json'
+    }
+  });
+  
+  if (currentResponse.getResponseCode() !== 200) {
+    throw new Error(`API returned ${currentResponse.getResponseCode()}`);
   }
+  
+  const currentJson = JSON.parse(currentResponse.getContentText());
+  const currentPrice = parseFloat(currentJson.data.priceUsd);
+  const change24h = parseFloat(currentJson.data.changePercent24Hr);
+  
+  const now = Date.now();
+  const day7 = now - (7 * 24 * 60 * 60 * 1000);
+  const day30 = now - (30 * 24 * 60 * 60 * 1000);
+  const day365 = now - (365 * 24 * 60 * 60 * 1000);
+  
+  const historyUrl = `https://api.coincap.io/v2/assets/${coinId}/history?interval=d1`;
+  const historyResponse = UrlFetchApp.fetch(historyUrl, { muteHttpExceptions: true });
+  
+  if (historyResponse.getResponseCode() !== 200) {
+    return {
+      price: currentPrice,
+      change_24h: change24h,
+      change_7d: null,
+      change_30d: null,
+      change_1y: null
+    };
+  }
+  
+  const history = JSON.parse(historyResponse.getContentText()).data;
+  
+  const price7d = findClosestPriceByTime(history, day7);
+  const price30d = findClosestPriceByTime(history, day30);
+  const price1y = findClosestPriceByTime(history, day365);
+  
+  return {
+    price: currentPrice,
+    change_24h: change24h,
+    change_7d: calculateChange(price7d, currentPrice),
+    change_30d: calculateChange(price30d, currentPrice),
+    change_1y: calculateChange(price1y, currentPrice)
+  };
+}
+
+function findClosestPriceByTime(history, targetTime) {
+  if (!history || history.length === 0) return null;
+  
+  let closest = history[0];
+  let minDiff = Math.abs(history[0].time - targetTime);
+  
+  for (let i = 1; i < history.length; i++) {
+    const diff = Math.abs(history[i].time - targetTime);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = history[i];
+    }
+  }
+  
+  return parseFloat(closest.priceUsd);
+}
+
+function fetchStockData(symbol) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=1y&interval=1d`;
+  
+  const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  
+  if (response.getResponseCode() !== 200) {
+    throw new Error(`API returned ${response.getResponseCode()}`);
+  }
+  
+  const json = JSON.parse(response.getContentText());
+  
+  if (!json.chart || !json.chart.result || json.chart.result.length === 0) {
+    throw new Error("Invalid response structure");
+  }
+  
+  const result = json.chart.result[0];
+  const meta = result.meta;
+  const timestamps = result.timestamp;
+  const closes = result.indicators.quote[0].close;
+  
+  const currentPrice = meta.regularMarketPrice;
+  
+  const now = Math.floor(Date.now() / 1000);
+  const day1 = now - (24 * 60 * 60);
+  const day7 = now - (7 * 24 * 60 * 60);
+  const day30 = now - (30 * 24 * 60 * 60);
+  const day365 = now - (365 * 24 * 60 * 60);
+  
+  const price1d = findClosestPrice(timestamps, closes, day1);
+  const price7d = findClosestPrice(timestamps, closes, day7);
+  const price30d = findClosestPrice(timestamps, closes, day30);
+  const price1y = findClosestPrice(timestamps, closes, day365);
+  
+  return {
+    price: currentPrice,
+    change_24h: calculateChange(price1d, currentPrice),
+    change_7d: calculateChange(price7d, currentPrice),
+    change_30d: calculateChange(price30d, currentPrice),
+    change_1y: calculateChange(price1y, currentPrice)
+  };
+}
+
+function findClosestPrice(timestamps, closes, targetTime) {
+  if (!timestamps || timestamps.length === 0) return null;
+  
+  let closestIndex = 0;
+  let minDiff = Math.abs(timestamps[0] - targetTime);
+  
+  for (let i = 1; i < timestamps.length; i++) {
+    const diff = Math.abs(timestamps[i] - targetTime);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closestIndex = i;
+    }
+  }
+  
+  return closes[closestIndex];
+}
+
+function calculateChange(oldPrice, newPrice) {
+  if (!oldPrice || oldPrice === 0 || !newPrice) return null;
+  return ((newPrice - oldPrice) / oldPrice) * 100;
 }
 
 function formatMarketData(symbol, data) {
   const formatChange = (change) => {
-    if (change === null) return "N/A";
+    if (change === null || change === undefined) return "N/A";
     const sign = change >= 0 ? "+" : "";
     return `${sign}${change.toFixed(2)}%`;
   };
@@ -552,41 +499,414 @@ function formatMarketData(symbol, data) {
     return `$${price.toFixed(4)}`;
   };
   
-  return `  ${symbol}: ${formatPrice(data.price)} | ` +
-         `1D: ${formatChange(data.change_24h)} | ` +
-         `1W: ${formatChange(data.change_7d)} | ` +
-         `1M: ${formatChange(data.change_30d)} | ` +
-         `1Y: ${formatChange(data.change_1y)}`;
+  return `${symbol}: ${formatPrice(data.price)} (1D: ${formatChange(data.change_24h)}, 1W: ${formatChange(data.change_7d)}, 1M: ${formatChange(data.change_30d)}, 1Y: ${formatChange(data.change_1y)})\n`;
 }
 
 /*******************************
- * UTILITY FUNCTIONS
+ GOOGLE ALERTS WITH LINKS
+*******************************/
+function fetchAlertsWithLinks() {
+  let allAlerts = [];
+  let linkMap = {};
+  const thirteenHoursAgo = new Date();
+  thirteenHoursAgo.setHours(thirteenHoursAgo.getHours() - 13);
+
+  ALERT_TOPICS.forEach(topic => {
+    try {
+      const newsItems = searchGoogleNewsWithLinks(topic, thirteenHoursAgo);
+      
+      if (newsItems.length > 0) {
+        newsItems.forEach(item => {
+          const linkKey = `ALERT_${Object.keys(linkMap).length}`;
+          linkMap[linkKey] = item.url;
+          allAlerts.push(`[${linkKey}] ${item.title} (${item.source}, ${topic})`);
+        });
+      }
+    } catch (err) {
+      Logger.log(`Alert search failed for "${topic}": ${err}`);
+    }
+    
+    Utilities.sleep(800);
+  });
+
+  if (allAlerts.length === 0) {
+    return { text: "", links: {} };
+  }
+
+  return {
+    text: allAlerts.join("\n"),
+    links: linkMap
+  };
+}
+
+function searchGoogleNewsWithLinks(query, sinceDate) {
+  const encodedQuery = encodeURIComponent(query);
+  
+  const urls = [
+    `https://news.google.com/rss/search?q=${encodedQuery}&hl=en-US&gl=US&ceid=US:en`,
+    `https://news.google.com/rss/search?q=${encodedQuery}&hl=he&gl=IL&ceid=IL:he`
+  ];
+  
+  let allResults = [];
+  
+  for (const url of urls) {
+    try {
+      const response = UrlFetchApp.fetch(url, { 
+        muteHttpExceptions: true,
+        followRedirects: true,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+      
+      if (response.getResponseCode() !== 200) {
+        continue;
+      }
+      
+      const xml = XmlService.parse(response.getContentText());
+      const channel = xml.getRootElement().getChild("channel");
+      
+      if (!channel) continue;
+      
+      const items = channel.getChildren("item");
+      
+      for (let i = 0; i < Math.min(5, items.length); i++) {
+        const item = items[i];
+        const pubDateElement = item.getChild("pubDate");
+        
+        if (!pubDateElement) continue;
+        
+        const pubDate = new Date(pubDateElement.getText());
+        
+        if (pubDate >= sinceDate) {
+          const titleElement = item.getChild("title");
+          const linkElement = item.getChild("link");
+          const sourceElement = item.getChild("source");
+          
+          if (titleElement && linkElement) {
+            const title = titleElement.getText();
+            const link = linkElement.getText();
+            const source = sourceElement ? sourceElement.getText() : "Google News";
+            
+            if (!allResults.some(r => r.title === title)) {
+              allResults.push({
+                title: title,
+                url: link,
+                source: source,
+                date: formatDate(pubDate)
+              });
+            }
+          }
+        }
+      }
+    } catch (e) {
+      Logger.log(`Error with URL ${url}: ${e}`);
+      continue;
+    }
+  }
+  
+  return allResults.slice(0, 3);
+}
+
+function formatDate(date) {
+  const now = new Date();
+  const diffHours = Math.floor((now - date) / (1000 * 60 * 60));
+  const diffMinutes = Math.floor((now - date) / (1000 * 60));
+  
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return date.toLocaleDateString();
+}
+
+/*******************************
+ MULTI-SOURCE NEWS WITH LINKS
+*******************************/
+function fetchNewsTextWithLinks() {
+  let allHeadlines = [];
+  let linkMap = {};
+  const thirteenHoursAgo = new Date();
+  thirteenHoursAgo.setHours(thirteenHoursAgo.getHours() - 13);
+
+  NEWS_SOURCES.forEach(source => {
+    try {
+      const response = UrlFetchApp.fetch(source.url, { 
+        muteHttpExceptions: true,
+        followRedirects: true 
+      });
+      
+      if (response.getResponseCode() !== 200) {
+        Logger.log(`${source.name} returned ${response.getResponseCode()}`);
+        return;
+      }
+      
+      const xml = response.getContentText("UTF-8");
+      const document = XmlService.parse(xml);
+      const root = document.getRootElement();
+      
+      let channel = root.getChild("channel");
+      if (!channel) {
+        channel = root;
+      }
+      
+      const items = channel.getChildren("item");
+      if (!items || items.length === 0) {
+        const entries = channel.getChildren("entry");
+        if (entries && entries.length > 0) {
+          let count = 0;
+          for (let i = 0; i < entries.length && count < 10; i++) {
+            const entry = entries[i];
+            const titleElement = entry.getChild("title");
+            const linkElement = entry.getChild("link");
+            const publishedElement = entry.getChild("published") || entry.getChild("updated");
+            
+            if (titleElement && publishedElement) {
+              const pubDate = new Date(publishedElement.getText());
+              if (pubDate >= thirteenHoursAgo) {
+                const title = titleElement.getText();
+                let link = "";
+                if (linkElement) {
+                  link = linkElement.getAttribute("href") ? linkElement.getAttribute("href").getValue() : linkElement.getText();
+                }
+                
+                const linkKey = `LINK_${Object.keys(linkMap).length}`;
+                linkMap[linkKey] = link;
+                allHeadlines.push(`[${linkKey}] [${source.name}] ${title}`);
+                count++;
+              }
+            }
+          }
+          return;
+        }
+      }
+
+      let count = 0;
+      for (let i = 0; i < items.length && count < 10; i++) {
+        const item = items[i];
+        const titleElement = item.getChild("title");
+        const linkElement = item.getChild("link");
+        const pubDateElement = item.getChild("pubDate");
+        
+        if (titleElement && pubDateElement) {
+          const pubDate = new Date(pubDateElement.getText());
+          if (pubDate >= thirteenHoursAgo) {
+            const title = titleElement.getText();
+            const link = linkElement ? linkElement.getText() : "";
+            
+            const linkKey = `LINK_${Object.keys(linkMap).length}`;
+            linkMap[linkKey] = link;
+            allHeadlines.push(`[${linkKey}] [${source.name}] ${title}`);
+            count++;
+          }
+        }
+      }
+    } catch (err) {
+      Logger.log(`Failed to fetch ${source.name}: ${err}`);
+    }
+  });
+
+  if (allHeadlines.length === 0) {
+    return { text: "No news headlines from the past 13 hours.", links: {} };
+  }
+
+  return {
+    text: allHeadlines.join("\n"),
+    links: linkMap
+  };
+}
+
+/*******************************
+ GPT SUMMARIZERS
+*******************************/
+function summarizeNewsWithChatGPT(text, linkMap) {
+  const url = "https://api.openai.com/v1/chat/completions";
+
+  const payload = {
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system", 
+        content: "You are a writer for The Economist. Write news stories in The Economist's style: narrative prose paragraphs. CRITICAL FORMATTING: Wrap each story in <p></p> tags. After EACH story paragraph, include a source link on a new line in small gray text like: <div class='story-link'><a href='LINK_X'>Read more</a></div>. Each story should be 3-5 sentences covering who, what, where, when, and why. When you reference a headline that has a [LINK_X] tag, include that link in the story-link div. Group related headlines into single coherent stories. Write in a sophisticated, analytical tone. CRITICAL: Only include information that is explicitly stated in the headlines. Do NOT invent details, quotes, or specifics that are not in the source material." 
+      },
+      {
+        role: "user", 
+        content: "Write 5-8 news stories from these headlines. IMPORTANT: Format each story as: <p>Story text here...</p><div class='story-link'><a href='LINK_X'>Read more</a></div>. When referencing a specific headline with [LINK_X], use that link in the story-link div. Prioritize the most important stories. DO NOT add fabricated details - only use information explicitly stated in the headlines:\n\n" + text 
+      }
+    ],
+    temperature: 0.2,
+    max_tokens: 2500
+  };
+
+  const options = {
+    method: "post",
+    contentType: "application/json",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    payload: JSON.stringify(payload)
+  };
+
+  try {
+    const res = UrlFetchApp.fetch(url, options);
+    const json = JSON.parse(res.getContentText());
+    let summary = json.choices[0].message.content.trim();
+    
+    // Replace link placeholders
+    for (const [key, url] of Object.entries(linkMap)) {
+      const regex = new RegExp(key, 'g');
+      summary = summary.replace(regex, url);
+    }
+    
+    return summary;
+  } catch (e) {
+    Logger.log(e);
+    return "News summarization failed.";
+  }
+}
+
+function summarizeAlertsWithChatGPT(text, linkMap) {
+  const url = "https://api.openai.com/v1/chat/completions";
+
+  const payload = {
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system", 
+        content: "You are a writer for The Economist. Write brief news items in The Economist's style. CRITICAL FORMATTING: Wrap each item in <p></p> tags. Each item should be 2-3 sentences. When you reference an alert that has a [ALERT_X] tag, hyperlink the relevant text using: <a href='ALERT_X'>descriptive text</a>. Write in a sophisticated tone. CRITICAL: Only include information explicitly stated in the alerts. Do NOT fabricate details." 
+      },
+      {
+        role: "user", 
+        content: "Write brief news items for these personal alerts. IMPORTANT: Wrap each individual item in <p></p> tags. Each should be 2-3 sentences. Hyperlink relevant phrases using <a href='ALERT_X'>text</a> format. Only use information provided in the alerts:\n\n" + text 
+      }
+    ],
+    temperature: 0.2,
+    max_tokens: 1500
+  };
+
+  const options = {
+    method: "post",
+    contentType: "application/json",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    payload: JSON.stringify(payload)
+  };
+
+  try {
+    const res = UrlFetchApp.fetch(url, options);
+    const json = JSON.parse(res.getContentText());
+    let summary = json.choices[0].message.content.trim();
+    
+    // Replace link placeholders
+    for (const [key, url] of Object.entries(linkMap)) {
+      const regex = new RegExp(key, 'g');
+      summary = summary.replace(regex, url);
+    }
+    
+    return summary;
+  } catch (e) {
+    Logger.log(e);
+    return "";
+  }
+}
+
+/*******************************
+ WEATHER FETCHER (Open-Meteo)
+*******************************/
+function fetchWeatherForLocations() {
+  let report = "";
+
+  for (const [name, coords] of Object.entries(LOCATIONS)) {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}&current_weather=true&timezone=auto`;
+
+    try {
+      const json = JSON.parse(UrlFetchApp.fetch(url).getContentText());
+      const w = json.current_weather;
+      const clothing =
+        w.temperature >= 26 ? "T-shirt and light clothing" :
+        w.temperature >= 20 ? "Light layer recommended" :
+        w.temperature >= 14 ? "Long sleeves or light jacket" :
+        "Coat or warm layers";
+
+      report += `${name}: ${w.temperature}°C, wind ${w.windspeed} km/h. ${clothing}.\n`;
+    } catch (e) {
+      Logger.log(e);
+      report += `${name}: Weather unavailable.\n`;
+    }
+  }
+
+  return report.trim();
+}
+
+/*******************************
+ * TROUBLESHOOTING & TEST FUNCTIONS
  *******************************/
 
-// Test function - run this to test your configuration
-function testReport() {
-  Logger.log("Running test report...");
-  dailyReport();
-  Logger.log("Check your email!");
+/**
+ * Tests the OpenAI API connection and summarization.
+ * Select this function and click "Run" to test.
+ * Check the logs for the output.
+ */
+function testOpenAISummary() {
+  if (!OPENAI_API_KEY || OPENAI_API_KEY === "") {
+    Logger.log("OpenAI API key is not set. Please set it in Script Properties.");
+    return;
+  }
+  Logger.log("Testing OpenAI summarization...");
+  const sampleText = "[LINK_0] [Hacker News] Major Tech Company Announces New AI Chip";
+  const sampleLinks = { "LINK_0": "https://example.com" };
+  const summary = summarizeNewsWithChatGPT(sampleText, sampleLinks);
+  
+  if (summary && summary !== "News summarization failed.") {
+    Logger.log("✅ OpenAI test successful!");
+    Logger.log("Sample Summary:");
+    Logger.log(summary);
+  } else {
+    Logger.log("❌ OpenAI test failed. Check your API key and OpenAI service status.");
+  }
 }
 
-// Manual trigger for specific sections
-function testNewsOnly() {
-  const news = fetchNewsText();
-  Logger.log(news);
+/**
+ * Tests fetching data from news RSS feeds.
+ * Select this function and click "Run" to test.
+ */
+function testNewsFetch() {
+  Logger.log("Testing RSS feed fetching...");
+  const news = fetchNewsTextWithLinks();
+  if (news.text && news.text !== "No news headlines from the past 13 hours.") {
+    Logger.log("✅ News fetching test successful!");
+    Logger.log("Fetched Headlines:");
+    Logger.log(news.text);
+  } else {
+    Logger.log("❌ News fetching test failed. Check the URLs in NEWS_SOURCES and their RSS feed status.");
+  }
 }
 
-function testWeatherOnly() {
+/**
+ * Tests fetching data from market data APIs.
+ * Select this function and click "Run" to test.
+ */
+function testMarketData() {
+  Logger.log("Testing Market Data fetching...");
+  const marketData = fetchMarketData();
+  if (marketData && !marketData.includes("Data unavailable")) {
+    Logger.log("✅ Market data test successful!");
+    Logger.log("Fetched Data:");
+    Logger.log(marketData);
+  } else {
+    Logger.log("❌ Market data test failed. Check the API status for Yahoo Finance and CoinCap.");
+    Logger.log("Full Log:");
+    Logger.log(marketData);
+  }
+}
+
+/**
+ * Tests fetching data from the weather API.
+ * Select this function and click "Run" to test.
+ */
+function testWeather() {
+  Logger.log("Testing Weather fetching...");
   const weather = fetchWeatherForLocations();
-  Logger.log(weather);
-}
-
-function testAlertsOnly() {
-  const alerts = fetchAlerts();
-  Logger.log(alerts);
-}
-
-function testMarketOnly() {
-  const market = fetchMarketData();
-  Logger.log(market);
+  if (weather && !weather.includes("Weather unavailable")) {
+    Logger.log("✅ Weather test successful!");
+    Logger.log("Fetched Weather:");
+    Logger.log(weather);
+  } else {
+    Logger.log("❌ Weather test failed. Check the Open-Meteo API status.");
+  }
 }
