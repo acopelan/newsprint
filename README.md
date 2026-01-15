@@ -269,7 +269,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- Built by the Newsprint Project Community for distraction-free news consumption
 - Inspired by the need for modern newspaper experience on e-readers
 - Uses OpenAI's GPT for intelligent summarization
 - Leverages Google Apps Script for serverless automation
@@ -280,6 +279,6 @@ For support, please open an issue on the GitHub repository.
 
 ---
 
-**Made with ☕ for better mornings**
+**Built for intentional readers**
 
-*Newsprint: Because your news should come to you, not the other way around.*
+*Newsprint: Mindful news consumption for the modern reader.*
