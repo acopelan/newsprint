@@ -1,0 +1,48 @@
+# API Keys and Secrets
+*.key
+*.secret
+config-personal.js
+.env
+
+# Google Apps Script
+.clasp.json
+.claspignore
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Personal configurations
+config-*.js
+!config-minimal.js
+!config-full.js
+
+# Notes and drafts
+notes/
+drafts/
+scratch/
