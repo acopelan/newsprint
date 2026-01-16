@@ -15,6 +15,11 @@ Newsprint is a Google Apps Script that automates the creation and delivery of a 
 - 📧 **Dual Delivery**: Send digests to both a regular email address and a Kindle e-reader.
 - 🌐 **Customizable**: Easily configured with your own sources, topics, and settings.
 
+## 📸 What It Looks Like
+
+![Sample Daily Digest](images/newsprint.jpeg)
+*A typical morning digest delivered to your inbox*
+
 ## 🚀 Quick Start
 
 ### Prerequisites
